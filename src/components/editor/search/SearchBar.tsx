@@ -100,17 +100,21 @@ export function SearchBar({
     [content, searchText, caseSensitive, useRegex]
   );
   
-  // Notify parent of matches
-  useEffect(() => {
-    onMatchesChange?.(matches, currentMatchIndex);
-  }, [matches, currentMatchIndex, onMatchesChange]);
+  // Compute valid currentMatchIndex during render (avoid Effect for state adjustment)
+  // If currentMatchIndex is out of bounds, clamp it - this is more efficient than an Effect
+  const validCurrentMatchIndex = matches.length === 0 
+    ? 0 
+    : Math.min(currentMatchIndex, matches.length - 1);
   
-  // Reset current match when matches change
+  // Sync state if index was clamped (adjust state during render pattern from React docs)
+  if (validCurrentMatchIndex !== currentMatchIndex && matches.length > 0) {
+    setCurrentMatchIndex(validCurrentMatchIndex);
+  }
+  
+  // Notify parent of matches - this Effect is appropriate because it synchronizes with parent
   useEffect(() => {
-    if (currentMatchIndex >= matches.length) {
-      setCurrentMatchIndex(Math.max(0, matches.length - 1));
-    }
-  }, [matches.length, currentMatchIndex]);
+    onMatchesChange?.(matches, validCurrentMatchIndex);
+  }, [matches, validCurrentMatchIndex, onMatchesChange]);
   
   // Focus search input when opened
   useEffect(() => {

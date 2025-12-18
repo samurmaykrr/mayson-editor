@@ -1,4 +1,4 @@
-import { useCallback, useState, useEffect } from 'react';
+import { useCallback, useState } from 'react';
 import { DocumentProvider, useDocument } from '@/store/documentStore';
 import { SearchProvider, useSearch } from '@/store/searchStore';
 import { EditorProvider, useEditor, usePanelLayout } from '@/store/editorStore';
@@ -73,14 +73,14 @@ function EditorView({ doc }: { doc: Document }) {
 }
 
 // Lazy wrapper that mounts component on first activation and keeps it mounted
+// Using adjust-state-during-render pattern instead of useEffect
 function TreeEditorLazy({ isActive }: { isActive: boolean }) {
   const [hasBeenActive, setHasBeenActive] = useState(false);
   
-  useEffect(() => {
-    if (isActive && !hasBeenActive) {
-      setHasBeenActive(true);
-    }
-  }, [isActive, hasBeenActive]);
+  // Adjust state during render - more efficient than useEffect
+  if (isActive && !hasBeenActive) {
+    setHasBeenActive(true);
+  }
   
   if (!hasBeenActive) return null;
   return <TreeEditor />;
@@ -89,11 +89,10 @@ function TreeEditorLazy({ isActive }: { isActive: boolean }) {
 function TableEditorLazy({ isActive }: { isActive: boolean }) {
   const [hasBeenActive, setHasBeenActive] = useState(false);
   
-  useEffect(() => {
-    if (isActive && !hasBeenActive) {
-      setHasBeenActive(true);
-    }
-  }, [isActive, hasBeenActive]);
+  // Adjust state during render - more efficient than useEffect
+  if (isActive && !hasBeenActive) {
+    setHasBeenActive(true);
+  }
   
   if (!hasBeenActive) return null;
   return <TableEditor />;

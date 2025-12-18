@@ -316,36 +316,30 @@ function SortTab({ parsedContent, isArray, fieldNames, onApply, onClose }: SortT
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   const [sortType, setSortType] = useState<'auto' | 'string' | 'number' | 'natural'>('auto');
   const [recursive, setRecursive] = useState(true);
-  const [preview, setPreview] = useState<JsonValue | null>(null);
   
-  // Update sort field when field names change
-  useEffect(() => {
-    if (fieldNames.length > 0 && !fieldNames.includes(sortField)) {
-      setSortField(fieldNames[0] ?? '');
-    }
-  }, [fieldNames, sortField]);
+  // Adjust sortField during render when fieldNames changes (instead of Effect)
+  // This avoids an extra render cycle
+  const validSortField = fieldNames.includes(sortField) ? sortField : (fieldNames[0] ?? '');
+  if (validSortField !== sortField && fieldNames.length > 0) {
+    setSortField(validSortField);
+  }
   
-  // Generate preview
-  useEffect(() => {
-    if (!parsedContent) {
-      setPreview(null);
-      return;
-    }
+  // Calculate preview with useMemo (instead of useEffect + setState)
+  // This is pure computation based on props/state - no side effects needed
+  const preview = useMemo(() => {
+    if (!parsedContent) return null;
     
     try {
       if (sortMode === 'array' && Array.isArray(parsedContent)) {
-        const sorted = sortArray(parsedContent, sortField, sortDirection, sortType);
-        setPreview(sorted);
+        return sortArray(parsedContent, validSortField, sortDirection, sortType);
       } else if (sortMode === 'keys') {
-        const sorted = sortObjectKeys(parsedContent, sortDirection, recursive);
-        setPreview(sorted);
-      } else {
-        setPreview(null);
+        return sortObjectKeys(parsedContent, sortDirection, recursive);
       }
+      return null;
     } catch {
-      setPreview(null);
+      return null;
     }
-  }, [parsedContent, sortMode, sortField, sortDirection, sortType, recursive]);
+  }, [parsedContent, sortMode, validSortField, sortDirection, sortType, recursive]);
   
   const handleApply = useCallback(() => {
     if (preview !== null) {
@@ -544,21 +538,17 @@ function FilterTab({ parsedContent, isArray, fieldNames, onApply, onClose }: Fil
     { field: fieldNames[0] ?? '', operator: 'equals', value: '' },
   ]);
   const [logic, setLogic] = useState<'and' | 'or'>('and');
-  const [preview, setPreview] = useState<JsonValue[] | null>(null);
   
-  // Update conditions when field names change
-  useEffect(() => {
-    if (fieldNames.length > 0 && conditions.length === 1 && conditions[0]?.field === '') {
-      setConditions([{ field: fieldNames[0] ?? '', operator: 'equals', value: '' }]);
-    }
-  }, [fieldNames, conditions]);
+  // Adjust conditions during render when field names change (instead of Effect)
+  // Only update if we have a single empty condition that needs the first field name
+  if (fieldNames.length > 0 && conditions.length === 1 && conditions[0]?.field === '' && fieldNames[0]) {
+    setConditions([{ field: fieldNames[0], operator: 'equals', value: '' }]);
+  }
   
-  // Generate preview
-  useEffect(() => {
-    if (!parsedContent || !isArray) {
-      setPreview(null);
-      return;
-    }
+  // Calculate preview with useMemo (instead of useEffect + setState)
+  // This is pure computation based on props/state - no side effects needed
+  const preview = useMemo(() => {
+    if (!parsedContent || !isArray) return null;
     
     // Filter out incomplete conditions
     const validConditions = conditions.filter(c => 
@@ -566,15 +556,13 @@ function FilterTab({ parsedContent, isArray, fieldNames, onApply, onClose }: Fil
     );
     
     if (validConditions.length === 0) {
-      setPreview(parsedContent as JsonValue[]);
-      return;
+      return parsedContent as JsonValue[];
     }
     
     try {
-      const filtered = filterArray(parsedContent as JsonValue[], validConditions, logic);
-      setPreview(filtered);
+      return filterArray(parsedContent as JsonValue[], validConditions, logic);
     } catch {
-      setPreview(null);
+      return null;
     }
   }, [parsedContent, isArray, conditions, logic]);
   
