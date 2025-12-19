@@ -4,11 +4,13 @@ import { Button } from './Button';
 import { Input } from './Input';
 import {
   useSettings,
+} from '@/store/useSettingsStore';
+import {
   type EditorSettings,
   type FormattingSettings,
   type BehaviorSettings,
   type UISettings,
-} from '@/store/settingsStore';
+} from '@/store/settingsContext';
 import { getShortcutsList } from '@/hooks';
 import { cn } from '@/lib/utils';
 import { MONOSPACE_FONTS, loadGoogleFont } from '@/lib/fonts';

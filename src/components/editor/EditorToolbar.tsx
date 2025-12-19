@@ -14,8 +14,9 @@ import {
 } from '@phosphor-icons/react';
 import { cn } from '@/lib/utils';
 import { Tooltip, TransformModal, CompareModal, SchemaValidatorModal, RepairPreviewModal } from '@/components/ui';
-import { useSearch } from '@/store/searchStore';
-import { useActiveDocument, useUpdateActiveContent, useUndoRedo, useActiveDocumentId, useDocumentActions } from '@/store/documentStore';
+import { useSearch } from '@/store/useSearchStore';
+import { useActiveDocument, useActiveDocumentId, useDocument, useDocumentActions, useUndoRedo } from '@/store/useDocumentStore';
+import { usePanelLayout } from '@/store/useEditorStore';
 import { formatJson, compactJson, parseJson, repairJson, canRepairJson } from '@/lib/json';
 import type { ViewMode } from '@/types';
 
@@ -83,11 +84,23 @@ function ViewToggle({ view, activeView, onClick, label }: ViewToggleProps) {
 }
 
 export function EditorToolbar() {
-  const doc = useActiveDocument();
-  const activeDocId = useActiveDocumentId();
-  const updateContent = useUpdateActiveContent();
+  // Get panel layout state to determine which document to operate on
+  const { panelLayout, activePanel, rightPanelDocId } = usePanelLayout();
+  
+  // Get the global active document (used for left panel)
+  const leftDoc = useActiveDocument();
+  const leftDocId = useActiveDocumentId();
+  
+  // Get the right panel document if in split view
+  const rightDoc = useDocument(rightPanelDocId ?? '');
+  
+  // Determine which document is currently "active" based on panel selection
+  const isRightPanelActive = panelLayout === 'split' && activePanel === 'right';
+  const doc = isRightPanelActive && rightDoc ? rightDoc : leftDoc;
+  const currentDocId = isRightPanelActive && rightPanelDocId ? rightPanelDocId : leftDocId;
+  
+  const { setViewMode, updateContent } = useDocumentActions();
   const { undo, redo, canUndo, canRedo } = useUndoRedo();
-  const { setViewMode } = useDocumentActions();
   const { openSearch } = useSearch();
   
   // Modal states
@@ -98,44 +111,52 @@ export function EditorToolbar() {
   const [repairedContent, setRepairedContent] = useState('');
   
   // Check if JSON can be repaired (is broken but repairable)
+  const docContent = doc?.content;
   const canRepair = useMemo(() => {
-    if (!doc?.content) return false;
-    return canRepairJson(doc.content);
-  }, [doc?.content]);
+    if (!docContent) return false;
+    return canRepairJson(docContent);
+  }, [docContent]);
+  
+  // Helper to update content for the current document
+  const updateCurrentContent = useCallback((content: string) => {
+    if (currentDocId) {
+      updateContent(currentDocId, content);
+    }
+  }, [currentDocId, updateContent]);
   
   const handleFormat = useCallback(() => {
-    if (!doc?.content) return;
-    const formatted = formatJson(doc.content);
+    if (!docContent) return;
+    const formatted = formatJson(docContent);
     if (formatted !== null) {
-      updateContent(formatted);
+      updateCurrentContent(formatted);
     }
-  }, [doc?.content, updateContent]);
+  }, [docContent, updateCurrentContent]);
   
   const handleCompact = useCallback(() => {
-    if (!doc?.content) return;
-    const compacted = compactJson(doc.content);
+    if (!docContent) return;
+    const compacted = compactJson(docContent);
     if (compacted !== null) {
-      updateContent(compacted);
+      updateCurrentContent(compacted);
     }
-  }, [doc?.content, updateContent]);
+  }, [docContent, updateCurrentContent]);
   
   const handleRepair = useCallback(() => {
-    if (!doc?.content) return;
-    const result = repairJson(doc.content);
+    if (!docContent) return;
+    const result = repairJson(docContent);
     if (result.wasRepaired) {
       setRepairedContent(result.output);
       setRepairPreviewOpen(true);
     }
-  }, [doc?.content]);
+  }, [docContent]);
   
   const handleApplyRepair = useCallback((content: string) => {
-    updateContent(content);
-  }, [updateContent]);
+    updateCurrentContent(content);
+  }, [updateCurrentContent]);
   
   const handleSortKeys = useCallback((ascending: boolean) => {
-    if (!doc?.content) return;
+    if (!docContent) return;
     
-    const { value, error } = parseJson(doc.content);
+    const { value, error } = parseJson(docContent);
     if (error || value === null) return;
     
     const sortObject = (obj: unknown): unknown => {
@@ -156,21 +177,21 @@ export function EditorToolbar() {
     };
     
     const sorted = sortObject(value);
-    updateContent(JSON.stringify(sorted, null, 2));
-  }, [doc?.content, updateContent]);
+    updateCurrentContent(JSON.stringify(sorted, null, 2));
+  }, [docContent, updateCurrentContent]);
   
   const handleViewChange = useCallback((view: ViewMode) => {
-    if (activeDocId) {
-      setViewMode(activeDocId, view);
+    if (currentDocId) {
+      setViewMode(currentDocId, view);
     }
-  }, [activeDocId, setViewMode]);
+  }, [currentDocId, setViewMode]);
   
   const handleTransformApply = useCallback((result: string) => {
-    updateContent(result);
+    updateCurrentContent(result);
     setTransformModalOpen(false);
-  }, [updateContent]);
+  }, [updateCurrentContent]);
   
-  const isValidJson = doc?.content ? parseJson(doc.content).error === null : false;
+  const isValidJson = docContent ? parseJson(docContent).error === null : false;
   const viewMode = doc?.viewMode ?? 'text';
   
   return (
@@ -294,7 +315,7 @@ export function EditorToolbar() {
         leftContent={doc?.content ?? ''}
         leftTitle={doc?.name ?? 'Current Document'}
         onApplyLeft={(content) => {
-          updateContent(content);
+          updateCurrentContent(content);
           setCompareModalOpen(false);
         }}
       />

@@ -182,38 +182,35 @@ interface QueryTabProps {
 
 function QueryTab({ parsedContent, availablePaths, onApply, onClose }: QueryTabProps) {
   const [query, setQuery] = useState('$');
-  const [error, setError] = useState<string | null>(null);
-  const [preview, setPreview] = useState<JsonValue | null>(null);
+  const [debouncedQuery, setDebouncedQuery] = useState('$');
   
-  // Execute query on input change (debounced)
+  // Debounce query changes
   useEffect(() => {
-    if (!parsedContent || !query.trim()) {
-      setPreview(null);
-      setError(null);
-      return;
+    const timer = setTimeout(() => {
+      setDebouncedQuery(query);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [query]);
+  
+  // Compute preview and error from debounced query using useMemo (pure computation)
+  const { preview, error } = useMemo(() => {
+    if (!parsedContent || !debouncedQuery.trim()) {
+      return { preview: null, error: null };
     }
     
-    const timer = setTimeout(() => {
-      try {
-        const results = queryJsonPath(parsedContent, query);
-        if (results.length === 0) {
-          setPreview(null);
-          setError('No results found');
-        } else if (results.length === 1) {
-          setPreview(results[0]?.value ?? null);
-          setError(null);
-        } else {
-          setPreview(results.map(r => r.value));
-          setError(null);
-        }
-      } catch (e) {
-        setError((e as Error).message);
-        setPreview(null);
+    try {
+      const results = queryJsonPath(parsedContent, debouncedQuery);
+      if (results.length === 0) {
+        return { preview: null, error: 'No results found' };
+      } else if (results.length === 1) {
+        return { preview: results[0]?.value ?? null, error: null };
+      } else {
+        return { preview: results.map(r => r.value), error: null };
       }
-    }, 300);
-    
-    return () => clearTimeout(timer);
-  }, [query, parsedContent]);
+    } catch (e) {
+      return { preview: null, error: (e as Error).message };
+    }
+  }, [debouncedQuery, parsedContent]);
   
   const handleApply = useCallback(() => {
     if (preview !== null) {

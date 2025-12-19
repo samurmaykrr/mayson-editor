@@ -1,9 +1,21 @@
 import { useCallback, useState } from 'react';
-import { DocumentProvider, useDocument } from '@/store/documentStore';
-import { SearchProvider, useSearch } from '@/store/searchStore';
-import { EditorProvider, useEditor, usePanelLayout } from '@/store/editorStore';
-import { SettingsProvider, useTheme } from '@/store/settingsStore';
+import { DocumentProvider, DocumentOverrideProvider } from '@/store/documentStore';
+import { SearchProvider } from '@/store/searchStore';
+import { EditorProvider } from '@/store/editorStore';
+import { SettingsProvider } from '@/store/settingsStore';
 import { ToastProvider } from '@/store/toastStore';
+import {
+  useDocument,
+  useActiveDocument,
+  useActiveDocumentId,
+  useDocumentActions,
+  useUpdateActiveContent,
+  useUndoRedo,
+  useTabs,
+} from '@/store/useDocumentStore';
+import { useSearch } from '@/store/useSearchStore';
+import { useEditor, usePanelLayout } from '@/store/useEditorStore';
+import { useTheme } from '@/store/useSettingsStore';
 import { Header } from '@/components/layout/Header';
 import { TabBar } from '@/components/layout/TabBar';
 import { StatusBar } from '@/components/layout/StatusBar';
@@ -14,14 +26,6 @@ import { TableEditor } from '@/components/editor/table/TableEditor';
 import { EditorToolbar } from '@/components/editor/EditorToolbar';
 import { SettingsModal, ToastContainer } from '@/components/ui';
 import { GoToLineModal } from '@/components/ui/GoToLineModal';
-import {
-  useActiveDocument,
-  useActiveDocumentId,
-  useDocumentActions,
-  useUpdateActiveContent,
-  useUndoRedo,
-  useTabs,
-} from '@/store/documentStore';
 import { useEditorShortcuts } from '@/hooks';
 import { formatJson, compactJson } from '@/lib/json';
 import { openFile, saveFile } from '@/lib/file';
@@ -103,7 +107,7 @@ function EditorArea() {
   
   if (!doc) {
     return (
-      <div className="flex-1 flex items-center justify-center text-text-tertiary">
+      <div className="h-full flex items-center justify-center text-text-tertiary">
         No document open
       </div>
     );
@@ -118,13 +122,17 @@ function RightPanelEditor({ docId }: { docId: string }) {
   
   if (!doc) {
     return (
-      <div className="flex-1 flex items-center justify-center text-text-tertiary">
+      <div className="h-full flex items-center justify-center text-text-tertiary">
         Select a document for comparison
       </div>
     );
   }
   
-  return <EditorView doc={doc} />;
+  return (
+    <DocumentOverrideProvider docId={docId}>
+      <EditorView doc={doc} />
+    </DocumentOverrideProvider>
+  );
 }
 
 // Split view container
@@ -136,15 +144,20 @@ function SplitEditorArea() {
   }
   
   return (
-    <div className="flex-1 flex overflow-hidden">
+    <div className="h-full flex overflow-hidden">
       {/* Left Panel */}
       <div 
         className={cn(
-          'flex flex-col overflow-hidden',
+          'h-full flex flex-col overflow-hidden',
           activePanel === 'left' && 'ring-1 ring-accent ring-inset'
         )}
         style={{ width: `${splitRatio * 100}%` }}
-        onClick={() => setActivePanel('left')}
+        onMouseDown={(e) => {
+          // Only set active panel if clicking directly on editor area, not on splitter
+          if (e.currentTarget === e.target || e.currentTarget.contains(e.target as Node)) {
+            setActivePanel('left');
+          }
+        }}
       >
         <EditorArea />
       </div>
@@ -155,11 +168,16 @@ function SplitEditorArea() {
       {/* Right Panel */}
       <div 
         className={cn(
-          'flex flex-col overflow-hidden',
+          'h-full flex flex-col overflow-hidden',
           activePanel === 'right' && 'ring-1 ring-accent ring-inset'
         )}
         style={{ width: `${(1 - splitRatio) * 100}%` }}
-        onClick={() => setActivePanel('right')}
+        onMouseDown={(e) => {
+          // Only set active panel if clicking directly on editor area, not on splitter
+          if (e.currentTarget === e.target || e.currentTarget.contains(e.target as Node)) {
+            setActivePanel('right');
+          }
+        }}
       >
         {rightPanelDocId ? (
           <RightPanelEditor docId={rightPanelDocId} />

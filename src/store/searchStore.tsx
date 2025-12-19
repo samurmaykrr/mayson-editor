@@ -1,28 +1,14 @@
 import {
-  createContext,
-  useContext,
   useState,
   useCallback,
   useMemo,
   type ReactNode,
 } from 'react';
-import type { SearchMatch } from '@/components/editor/search/SearchBar';
-
-interface SearchState {
-  isOpen: boolean;
-  showReplace: boolean;
-  matches: SearchMatch[];
-  currentMatchIndex: number;
-}
-
-interface SearchContextValue {
-  state: SearchState;
-  openSearch: (showReplace?: boolean) => void;
-  closeSearch: () => void;
-  setMatches: (matches: SearchMatch[], currentIndex: number) => void;
-}
-
-const SearchContext = createContext<SearchContextValue | null>(null);
+import {
+  SearchContext,
+  type SearchMatch,
+  type SearchState,
+} from './searchContext';
 
 export function SearchProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<SearchState>({
@@ -52,12 +38,4 @@ export function SearchProvider({ children }: { children: ReactNode }) {
   return (
     <SearchContext.Provider value={value}>{children}</SearchContext.Provider>
   );
-}
-
-export function useSearch() {
-  const context = useContext(SearchContext);
-  if (!context) {
-    throw new Error('useSearch must be used within SearchProvider');
-  }
-  return context;
 }

@@ -1,4 +1,5 @@
-import { useEffect, useRef, useCallback, useState, type ReactNode } from 'react';
+import { useLayoutEffect, useEffect, useRef, useCallback, useState } from 'react';
+import type { ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 
 export interface ContextMenuItem {
@@ -24,11 +25,14 @@ interface ContextMenuProps {
  */
 export function ContextMenu({ items, x, y, onClose }: ContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
-  const [position, setPosition] = useState({ x, y });
+  const [adjustedPosition, setAdjustedPosition] = useState<{ x: number; y: number } | null>(null);
   const [focusedIndex, setFocusedIndex] = useState(-1);
   
-  // Adjust position to keep menu within viewport
-  useEffect(() => {
+  // Calculate initial position - use provided x,y until we measure the menu
+  const position = adjustedPosition ?? { x, y };
+  
+  // Adjust position after menu is rendered to keep it within viewport
+  useLayoutEffect(() => {
     if (!menuRef.current) return;
     
     const rect = menuRef.current.getBoundingClientRect();
@@ -48,7 +52,14 @@ export function ContextMenu({ items, x, y, onClose }: ContextMenuProps) {
       newY = viewportHeight - rect.height - 8;
     }
     
-    setPosition({ x: Math.max(8, newX), y: Math.max(8, newY) });
+    const finalX = Math.max(8, newX);
+    const finalY = Math.max(8, newY);
+    
+    // Only update if different from current position to avoid unnecessary re-renders
+    if (finalX !== x || finalY !== y) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setAdjustedPosition({ x: finalX, y: finalY });
+    }
   }, [x, y]);
   
   // Close on click outside
@@ -168,45 +179,4 @@ export function ContextMenu({ items, x, y, onClose }: ContextMenuProps) {
       })}
     </div>
   );
-}
-
-/**
- * Hook for managing context menu state
- */
-export function useContextMenu() {
-  const [menuState, setMenuState] = useState<{
-    isOpen: boolean;
-    x: number;
-    y: number;
-    items: ContextMenuItem[];
-  }>({
-    isOpen: false,
-    x: 0,
-    y: 0,
-    items: [],
-  });
-  
-  const openMenu = useCallback((e: React.MouseEvent, items: ContextMenuItem[]) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setMenuState({
-      isOpen: true,
-      x: e.clientX,
-      y: e.clientY,
-      items,
-    });
-  }, []);
-  
-  const closeMenu = useCallback(() => {
-    setMenuState((prev) => ({ ...prev, isOpen: false }));
-  }, []);
-  
-  return {
-    isOpen: menuState.isOpen,
-    x: menuState.x,
-    y: menuState.y,
-    items: menuState.items,
-    openMenu,
-    closeMenu,
-  };
 }

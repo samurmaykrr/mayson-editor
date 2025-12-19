@@ -10,13 +10,10 @@ import {
 } from '@phosphor-icons/react';
 import { cn } from '@/lib/utils';
 import { Button, Tooltip } from '@/components/ui';
+import { findMatches, type SearchMatch } from '@/lib/search';
 
-export interface SearchMatch {
-  start: number;
-  end: number;
-  line: number;
-  column: number;
-}
+// Re-export SearchMatch for convenience
+export type { SearchMatch } from '@/lib/search';
 
 interface SearchBarProps {
   content: string;
@@ -25,56 +22,6 @@ interface SearchBarProps {
   onReplace: (searchText: string, replaceText: string, replaceAll: boolean) => void;
   onMatchesChange?: (matches: SearchMatch[], currentIndex: number) => void;
   showReplace?: boolean;
-}
-
-/**
- * Find all matches in content
- */
-function findMatches(
-  content: string,
-  searchText: string,
-  caseSensitive: boolean,
-  useRegex: boolean
-): SearchMatch[] {
-  if (!searchText) return [];
-  
-  const matches: SearchMatch[] = [];
-  
-  try {
-    let regex: RegExp;
-    if (useRegex) {
-      regex = new RegExp(searchText, caseSensitive ? 'g' : 'gi');
-    } else {
-      // Escape special regex characters for literal search
-      const escaped = searchText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      regex = new RegExp(escaped, caseSensitive ? 'g' : 'gi');
-    }
-    
-    let match: RegExpExecArray | null;
-    while ((match = regex.exec(content)) !== null) {
-      // Calculate line and column
-      const textBefore = content.slice(0, match.index);
-      const lines = textBefore.split('\n');
-      const line = lines.length;
-      const column = (lines[lines.length - 1]?.length ?? 0) + 1;
-      
-      matches.push({
-        start: match.index,
-        end: match.index + match[0].length,
-        line,
-        column,
-      });
-      
-      // Prevent infinite loops for zero-length matches
-      if (match[0].length === 0) {
-        regex.lastIndex++;
-      }
-    }
-  } catch {
-    // Invalid regex, return empty matches
-  }
-  
-  return matches;
 }
 
 export function SearchBar({
@@ -111,8 +58,10 @@ export function SearchBar({
     setCurrentMatchIndex(validCurrentMatchIndex);
   }
   
-  // Notify parent of matches - this Effect is appropriate because it synchronizes with parent
+  // Notify parent of matches - this effect is intentional to sync search results
+  // with parent component for highlighting. This is event-driven communication.
   useEffect(() => {
+    // eslint-disable-next-line react-you-might-not-need-an-effect/you-might-not-need-an-effect
     onMatchesChange?.(matches, validCurrentMatchIndex);
   }, [matches, validCurrentMatchIndex, onMatchesChange]);
   
@@ -350,5 +299,3 @@ export function SearchBar({
     </div>
   );
 }
-
-export { findMatches };

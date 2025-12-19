@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
-import { useActiveDocument } from '@/store/documentStore';
-import { useEditor } from '@/store/editorStore';
+import { useActiveDocument } from '@/store/useDocumentStore';
+import { useEditor } from '@/store/useEditorStore';
 import { CheckCircle, XCircle, Warning, FileJs } from '@phosphor-icons/react';
 import { Tooltip } from '@/components/ui/Tooltip';
 

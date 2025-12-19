@@ -16,7 +16,7 @@ import {
 import { cn } from '@/lib/utils';
 import { Button, Input } from '@/components/ui';
 import { parseJson, validateJsonSchema, isValidSchema, formatPath } from '@/lib/json';
-import { useSetValidationErrors, useActiveDocumentSchema, useSetDocumentSchema } from '@/store/documentStore';
+import { useSetValidationErrors, useActiveDocumentSchema, useSetDocumentSchema } from '@/store/useDocumentStore';
 import type { JsonSchema, ValidationError, SchemaSource } from '@/types';
 
 interface SchemaValidatorModalProps {

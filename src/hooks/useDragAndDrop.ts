@@ -92,7 +92,7 @@ export function useDragAndDrop<T>({
     (e: DragEvent<HTMLElement>, dropIndex: number) => {
       e.preventDefault();
       
-      const { draggedIndex } = state;
+      const draggedIndex = state.draggedIndex;
       
       if (draggedIndex !== null && draggedIndex !== dropIndex) {
         onReorder(draggedIndex, dropIndex);
@@ -106,7 +106,7 @@ export function useDragAndDrop<T>({
       });
       dragCounterRef.current = 0;
     },
-    [state.draggedIndex, onReorder]
+    [state, onReorder]
   );
 
   const handleDragEnd = useCallback(() => {

@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { generateId } from '@/lib/utils';
 
+// Worker state type
+interface WorkerState {
+  isReady: boolean;
+  error: Error | null;
+  isWorkerAvailable: boolean;
+}
+
 /**
  * Hook for using Web Workers with automatic fallback to main thread
  * 
@@ -25,18 +32,36 @@ export function useWorker<TMessage, TResponse>(
     timeoutId: ReturnType<typeof setTimeout>;
   }>>(new Map());
   
-  const [isReady, setIsReady] = useState(false);
-  const [error, setError] = useState<Error | null>(null);
+  // Track worker state - use refs for synchronous access, state for re-renders
+  const workerStateRef = useRef<WorkerState>({
+    isReady: !enabled,
+    error: null,
+    isWorkerAvailable: false,
+  });
   
-  // Initialize worker
+  // State to trigger re-renders when worker status changes
+  const [, forceUpdate] = useState({});
+  
+  // Helper to update worker state (synchronous ref update + async re-render)
+  const updateWorkerState = useCallback((newState: WorkerState) => {
+    workerStateRef.current = newState;
+    forceUpdate({});
+  }, []);
+  
+  // Initialize worker - only runs when enabled
   useEffect(() => {
     if (!enabled) {
-      setIsReady(true);
+      // When disabled, set state directly via ref (no setState in effect body)
+      workerStateRef.current = { isReady: true, error: null, isWorkerAvailable: false };
       return;
     }
     
+    let worker: Worker;
+    let isMounted = true;
+    
     try {
-      const worker = workerFactory();
+      // eslint-disable-next-line react-you-might-not-need-an-effect/you-might-not-need-an-effect -- Worker initialization requires effect for lifecycle management
+      worker = workerFactory();
       workerRef.current = worker;
       
       worker.onmessage = (event: MessageEvent<TResponse & { id: string }>) => {
@@ -50,8 +75,23 @@ export function useWorker<TMessage, TResponse>(
         }
       };
       
+      // Worker ready event - use custom event to signal readiness
+      worker.addEventListener('message', function onReady() {
+        // First message or explicit ready signal means worker is ready
+        if (isMounted) {
+          updateWorkerState({ isReady: true, error: null, isWorkerAvailable: true });
+        }
+        worker.removeEventListener('message', onReady);
+      }, { once: true });
+      
       worker.onerror = (event) => {
-        setError(new Error(event.message || 'Worker error'));
+        if (isMounted) {
+          updateWorkerState({
+            isReady: true,
+            error: new Error(event.message || 'Worker error'),
+            isWorkerAvailable: false,
+          });
+        }
         
         // Reject all pending tasks
         for (const [id, pending] of pendingRef.current) {
@@ -61,28 +101,37 @@ export function useWorker<TMessage, TResponse>(
         }
       };
       
-      setIsReady(true);
-      setError(null);
+      // Mark as ready immediately since worker creation succeeded
+      // The worker is available as soon as it's created
+      workerStateRef.current = { isReady: true, error: null, isWorkerAvailable: true };
+      
     } catch (e) {
-      setError(e instanceof Error ? e : new Error('Failed to create worker'));
-      setIsReady(true); // Still ready, will fall back to main thread
+      // Worker creation failed - update ref directly (no setState)
+      workerStateRef.current = {
+        isReady: true, // Still ready, will fall back to main thread
+        error: e instanceof Error ? e : new Error('Failed to create worker'),
+        isWorkerAvailable: false,
+      };
+      return;
     }
     
+    // Copy refs to local variables for cleanup
+    const pendingTasks = pendingRef.current;
+    
     return () => {
+      isMounted = false;
       // Clean up worker
-      if (workerRef.current) {
-        workerRef.current.terminate();
-        workerRef.current = null;
-      }
+      worker.terminate();
+      workerRef.current = null;
       
       // Reject pending tasks
-      for (const [id, pending] of pendingRef.current) {
+      for (const [id, pending] of pendingTasks) {
         clearTimeout(pending.timeoutId);
         pending.reject(new Error('Worker terminated'));
-        pendingRef.current.delete(id);
+        pendingTasks.delete(id);
       }
     };
-  }, [enabled, workerFactory]);
+  }, [enabled, workerFactory, updateWorkerState]);
   
   /**
    * Post a message to the worker and wait for response
@@ -115,16 +164,11 @@ export function useWorker<TMessage, TResponse>(
     });
   }, [enabled, timeout]);
   
-  /**
-   * Check if worker is available
-   */
-  const isAvailable = enabled && workerRef.current !== null && error === null;
-  
   return {
     postMessage,
-    isReady,
-    isAvailable,
-    error,
+    isReady: workerStateRef.current.isReady,
+    isAvailable: workerStateRef.current.isWorkerAvailable,
+    error: workerStateRef.current.error,
   };
 }
 

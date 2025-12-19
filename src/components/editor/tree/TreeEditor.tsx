@@ -21,7 +21,7 @@ import {
 } from '@phosphor-icons/react';
 import { cn } from '@/lib/utils';
 import { parseJson } from '@/lib/json';
-import { useActiveDocument, useUpdateActiveContent } from '@/store/documentStore';
+import { useCurrentDocument, useUpdateCurrentContent } from '@/store/useDocumentStore';
 import { ContextMenu, useContextMenu, InlineEditor, type ContextMenuItem } from '@/components/ui';
 import type { JsonValue, JsonObject } from '@/types';
 
@@ -126,13 +126,14 @@ function TreeNode({
   }, [onSaveEdit, path]);
   
   // Register ref for keyboard navigation
+  const nodeRefsMap = nodeRefs.current;
   const nodeRef = useCallback((el: HTMLDivElement | null) => {
     if (el) {
-      nodeRefs.current.set(path, el);
+      nodeRefsMap.set(path, el);
     } else {
-      nodeRefs.current.delete(path);
+      nodeRefsMap.delete(path);
     }
-  }, [path, nodeRefs]);
+  }, [path, nodeRefsMap]);
   
   const renderValue = () => {
     // Show inline editor if editing this node
@@ -607,7 +608,7 @@ function Breadcrumbs({
     
     // Parse the path to extract segments
     const pathWithoutRoot = path.replace(/^\$\.?/, '');
-    const tokens = pathWithoutRoot.match(/[^.\[\]]+|\[\d+\]/g) || [];
+    const tokens = pathWithoutRoot.match(/[^.[\]]+|\[\d+\]/g) || [];
     
     for (const token of tokens) {
       if (token.startsWith('[')) {
@@ -670,8 +671,8 @@ function Breadcrumbs({
 }
 
 export function TreeEditor() {
-  const doc = useActiveDocument();
-  const updateContent = useUpdateActiveContent();
+  const doc = useCurrentDocument();
+  const updateContent = useUpdateCurrentContent();
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set(['$']));
   const [editingPath, setEditingPath] = useState<string | null>(null);
   const [selectedPath, setSelectedPath] = useState<string | null>('$');
@@ -865,7 +866,7 @@ export function TreeEditor() {
     e: React.MouseEvent,
     path: string,
     value: JsonValue,
-    _keyName: string | number | null
+    // keyName parameter kept for API compatibility but not used in this handler
   ) => {
     const isRoot = path === '$';
     const isPrimitive = value === null || typeof value !== 'object';

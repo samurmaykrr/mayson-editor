@@ -1,6 +1,4 @@
 import {
-  createContext,
-  useContext,
   useReducer,
   useMemo,
   useEffect,
@@ -8,78 +6,15 @@ import {
   type ReactNode,
 } from 'react';
 import { loadGoogleFont } from '@/lib/fonts';
-
-// ============================================
-// Settings Types
-// ============================================
-
-export interface EditorSettings {
-  fontSize: number;
-  fontFamily: string; // Font family name (e.g., 'Geist Mono', 'JetBrains Mono', etc.)
-  tabSize: number;
-  useTabs: boolean;
-  lineWrapping: boolean;
-  lineNumbers: boolean;
-  highlightActiveLine: boolean;
-  matchBrackets: boolean;
-  autoCloseBrackets: boolean;
-}
-
-export interface FormattingSettings {
-  defaultIndent: number;
-  smartFormatMaxLineLength: number;
-  smartFormatInlineThreshold: number;
-}
-
-export interface BehaviorSettings {
-  autoSaveInterval: number; // ms, 0 = disabled
-  confirmBeforeClose: boolean;
-  restoreSession: boolean;
-}
-
-export interface UISettings {
-  theme: 'light' | 'dark' | 'system';
-  defaultViewMode: 'text' | 'tree' | 'table';
-}
-
-export interface SettingsState {
-  editor: EditorSettings;
-  formatting: FormattingSettings;
-  behavior: BehaviorSettings;
-  ui: UISettings;
-}
-
-// ============================================
-// Default Settings
-// ============================================
-
-export const DEFAULT_SETTINGS: SettingsState = {
-  editor: {
-    fontSize: 14,
-    fontFamily: 'JetBrains Mono',
-    tabSize: 2,
-    useTabs: false,
-    lineWrapping: false,
-    lineNumbers: true,
-    highlightActiveLine: true,
-    matchBrackets: true,
-    autoCloseBrackets: true,
-  },
-  formatting: {
-    defaultIndent: 2,
-    smartFormatMaxLineLength: 80,
-    smartFormatInlineThreshold: 4,
-  },
-  behavior: {
-    autoSaveInterval: 500,
-    confirmBeforeClose: true,
-    restoreSession: true,
-  },
-  ui: {
-    theme: 'dark',
-    defaultViewMode: 'text',
-  },
-};
+import {
+  SettingsContext,
+  DEFAULT_SETTINGS,
+  type SettingsState,
+  type EditorSettings,
+  type FormattingSettings,
+  type BehaviorSettings,
+  type UISettings,
+} from './settingsContext';
 
 // ============================================
 // Actions
@@ -162,21 +97,6 @@ function saveSettings(settings: SettingsState): void {
 }
 
 // ============================================
-// Context
-// ============================================
-
-interface SettingsContextValue {
-  settings: SettingsState;
-  updateEditor: (updates: Partial<EditorSettings>) => void;
-  updateFormatting: (updates: Partial<FormattingSettings>) => void;
-  updateBehavior: (updates: Partial<BehaviorSettings>) => void;
-  updateUI: (updates: Partial<UISettings>) => void;
-  resetSettings: () => void;
-}
-
-const SettingsContext = createContext<SettingsContextValue | null>(null);
-
-// ============================================
 // Provider
 // ============================================
 
@@ -192,9 +112,10 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
     saveSettings(settings);
   }, [settings]);
   
-  // Apply theme
+  // Apply theme - include settings.ui as dependency
+  const uiSettings = settings.ui;
   useEffect(() => {
-    const { theme } = settings.ui;
+    const { theme } = uiSettings;
     
     const applyTheme = (isDark: boolean) => {
       if (isDark) {
@@ -215,18 +136,19 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
       applyTheme(theme === 'dark');
       return undefined;
     }
-  }, [settings.ui.theme]);
+  }, [uiSettings]);
   
-  // Apply editor font settings as CSS variables
+  // Apply editor font settings as CSS variables - include settings.editor as dependency
+  const editorSettings = settings.editor;
   useEffect(() => {
-    const { fontSize, fontFamily } = settings.editor;
+    const { fontSize, fontFamily } = editorSettings;
     
     // Load the font if it's a Google Font
     loadGoogleFont(fontFamily).then(() => {
       document.documentElement.style.setProperty('--editor-font-size', `${fontSize}px`);
       document.documentElement.style.setProperty('--editor-font-family', `"${fontFamily}", monospace`);
     });
-  }, [settings.editor.fontSize, settings.editor.fontFamily]);
+  }, [editorSettings]);
   
   const updateEditor = useCallback((updates: Partial<EditorSettings>) => {
     dispatch({ type: 'UPDATE_EDITOR', payload: updates });
@@ -265,55 +187,4 @@ export function SettingsProvider({ children }: SettingsProviderProps) {
       {children}
     </SettingsContext.Provider>
   );
-}
-
-// ============================================
-// Hooks
-// ============================================
-
-export function useSettings() {
-  const context = useContext(SettingsContext);
-  if (!context) {
-    throw new Error('useSettings must be used within SettingsProvider');
-  }
-  return context;
-}
-
-export function useEditorSettings() {
-  const { settings } = useSettings();
-  return settings.editor;
-}
-
-export function useFormattingSettings() {
-  const { settings } = useSettings();
-  return settings.formatting;
-}
-
-export function useBehaviorSettings() {
-  const { settings } = useSettings();
-  return settings.behavior;
-}
-
-export function useUISettings() {
-  const { settings } = useSettings();
-  return settings.ui;
-}
-
-export function useTheme() {
-  const { settings, updateUI } = useSettings();
-  
-  const setTheme = useCallback((theme: 'light' | 'dark' | 'system') => {
-    updateUI({ theme });
-  }, [updateUI]);
-  
-  const toggleTheme = useCallback(() => {
-    const newTheme = settings.ui.theme === 'dark' ? 'light' : 'dark';
-    updateUI({ theme: newTheme });
-  }, [settings.ui.theme, updateUI]);
-  
-  return {
-    theme: settings.ui.theme,
-    setTheme,
-    toggleTheme,
-  };
 }

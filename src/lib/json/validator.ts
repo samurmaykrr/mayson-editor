@@ -133,11 +133,8 @@ export function pathToLineNumber(jsonString: string, path: string): number | nul
   // This is a simplified approach that works for well-formatted JSON
   const lines = jsonString.split('\n');
   
-  let currentDepth = 0;
   const pathStack: string[] = [];
   let inString = false;
-  let stringContent = '';
-  let lastKey = '';
   let lastKeyLine = 1;
   
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
@@ -150,38 +147,23 @@ export function pathToLineNumber(jsonString: string, path: string): number | nul
       
       // Handle string state
       if (char === '"' && prevChar !== '\\') {
-        if (inString) {
-          // End of string - check if it was a key
-          const restOfLine = line.slice(i + 1).trim();
-          if (restOfLine.startsWith(':')) {
-            lastKey = stringContent;
-            lastKeyLine = lineNum;
-          }
-          stringContent = '';
-        }
-        inString = !inString;
-        continue;
-      }
-      
-      if (inString) {
-        stringContent += char;
-        continue;
+       if (inString) {
+           // End of string - check if it was a key
+           const restOfLine = line.slice(i + 1).trim();
+            if (restOfLine.startsWith(':')) {
+              lastKeyLine = lineNum;
+            }
+         }
+         inString = !inString;
+         continue;
+       }
+       
+       if (inString) {
+         continue;
       }
       
       // Handle structural characters
-      if (char === '{' || char === '[') {
-        // Push current key to path stack
-        if (lastKey && char === '{') {
-          pathStack.push(lastKey);
-        } else if (char === '[') {
-          if (lastKey) {
-            pathStack.push(lastKey);
-          }
-        }
-        currentDepth++;
-        lastKey = '';
-      } else if (char === '}' || char === ']') {
-        currentDepth--;
+      if (char === '}' || char === ']') {
         pathStack.pop();
       } else if (char === ',') {
         // Array index tracking - increment last array index
@@ -225,17 +207,12 @@ export function findPathLine(jsonString: string, path: string): number | null {
   const keyPattern = new RegExp(`^\\s*"${escapeRegex(targetKey ?? '')}"\\s*:`);
   
   // Track nesting to match the right occurrence
-  let depth = 0;
   const parentSegments = segments.slice(0, -1);
   let parentMatched = parentSegments.length === 0;
   
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
     const line = lines[lineIndex] ?? '';
     const lineNum = lineIndex + 1;
-    
-    // Count depth changes
-    const openBraces = (line.match(/[{[]/g) ?? []).length;
-    const closeBraces = (line.match(/[}\]]/g) ?? []).length;
     
     // Check for parent path match (simplified)
     if (!parentMatched && parentSegments.length > 0) {
@@ -258,8 +235,6 @@ export function findPathLine(jsonString: string, path: string): number | null {
         return lineNum;
       }
     }
-    
-    depth += openBraces - closeBraces;
   }
   
   return null;

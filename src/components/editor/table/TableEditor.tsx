@@ -1,4 +1,15 @@
 import { useMemo, useState, useCallback, useRef, useEffect } from 'react';
+import {
+  useReactTable,
+  getCoreRowModel,
+  getSortedRowModel,
+  flexRender,
+  createColumnHelper,
+  type SortingState,
+  type ColumnDef,
+  type Row,
+} from '@tanstack/react-table';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { 
   CaretUp, 
   CaretDown, 
@@ -9,46 +20,33 @@ import {
 } from '@phosphor-icons/react';
 import { cn } from '@/lib/utils';
 import { parseJson, formatJson } from '@/lib/json';
-import { useActiveDocument, useUpdateActiveContent } from '@/store/documentStore';
+import { useCurrentDocument, useUpdateCurrentContent } from '@/store/useDocumentStore';
 import { InlineEditor, ContextMenu, useContextMenu, type ContextMenuItem } from '@/components/ui';
 import type { JsonValue, JsonObject } from '@/types';
 
-// Row height in pixels
-const ROW_HEIGHT = 34;
-// Number of extra rows to render above/below viewport for smooth scrolling
-const OVERSCAN_ROWS = 5;
+// Row height for virtualization
+const ROW_HEIGHT = 36;
 
 interface EditingCell {
   rowIndex: number;
-  column: string;
-}
-
-interface SortConfig {
-  column: string;
-  direction: 'asc' | 'desc';
-}
-
-interface ColumnWidths {
-  [key: string]: number;
+  columnId: string;
 }
 
 export function TableEditor() {
-  const doc = useActiveDocument();
+  const doc = useCurrentDocument();
   const content = doc?.content ?? '[]';
-  const updateContent = useUpdateActiveContent();
+  const updateContent = useUpdateCurrentContent();
+  
   const [editingCell, setEditingCell] = useState<EditingCell | null>(null);
-  const [sortConfig, setSortConfig] = useState<SortConfig | null>(null);
-  const [columnWidths, setColumnWidths] = useState<ColumnWidths>({});
-  const [selectedRow, setSelectedRow] = useState<number | null>(null);
-  const [selectedCell, setSelectedCell] = useState<{ row: number; col: number } | null>(null);
+  const [sorting, setSorting] = useState<SortingState>([]);
+  const [selectedRowIndex, setSelectedRowIndex] = useState<number | null>(null);
+  const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
   const [resizingColumn, setResizingColumn] = useState<string | null>(null);
   const [resizeStartX, setResizeStartX] = useState(0);
   const [resizeStartWidth, setResizeStartWidth] = useState(0);
-  const [scrollTop, setScrollTop] = useState(0);
-  const [containerHeight, setContainerHeight] = useState(0);
-  const tableRef = useRef<HTMLTableElement>(null);
+  
   const containerRef = useRef<HTMLDivElement>(null);
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const tableContainerRef = useRef<HTMLDivElement>(null);
   
   const { isOpen, x, y, items, openMenu, closeMenu } = useContextMenu();
   
@@ -58,10 +56,10 @@ export function TableEditor() {
     [content]
   );
   
-  // Check if we can render as a table (array of objects)
-  const tableData = useMemo(() => {
+  // Extract table data: columns and rows
+  const { columns: dataColumns, rows: dataRows } = useMemo(() => {
     if (!parsedValue || !Array.isArray(parsedValue)) {
-      return null;
+      return { columns: [], rows: [] };
     }
     
     // Get all unique keys from all objects
@@ -74,12 +72,8 @@ export function TableEditor() {
         Object.keys(item).forEach(key => allKeys.add(key));
       } else {
         // Not all items are objects, can't render as table
-        return null;
+        return { columns: [], rows: [] };
       }
-    }
-    
-    if (rows.length === 0) {
-      return null;
     }
     
     return {
@@ -88,119 +82,21 @@ export function TableEditor() {
     };
   }, [parsedValue]);
   
-  // Sort rows if sorting is enabled
-  const sortedRows = useMemo(() => {
-    if (!tableData) return null;
-    if (!sortConfig) return tableData.rows;
-    
-    const { column, direction } = sortConfig;
-    return [...tableData.rows].sort((a, b) => {
-      const aVal = a[column];
-      const bVal = b[column];
-      
-      // Handle null/undefined
-      if (aVal === undefined || aVal === null) return direction === 'asc' ? -1 : 1;
-      if (bVal === undefined || bVal === null) return direction === 'asc' ? 1 : -1;
-      
-      // Compare values
-      if (typeof aVal === 'number' && typeof bVal === 'number') {
-        return direction === 'asc' ? aVal - bVal : bVal - aVal;
-      }
-      
-      const aStr = String(aVal);
-      const bStr = String(bVal);
-      return direction === 'asc' 
-        ? aStr.localeCompare(bStr) 
-        : bStr.localeCompare(aStr);
-    });
-  }, [tableData, sortConfig]);
-  
-  // Map sorted index back to original index
-  const getOriginalIndex = useCallback((sortedIndex: number): number => {
-    if (!sortConfig || !tableData || !sortedRows) return sortedIndex;
-    
-    const sortedRow = sortedRows[sortedIndex];
-    if (!sortedRow) return sortedIndex;
-    
-    return tableData.rows.findIndex(row => row === sortedRow);
-  }, [sortConfig, tableData, sortedRows]);
-  
-  // Calculate virtualization: which rows to render based on scroll position
-  // Only virtualize for large tables (>100 rows) to avoid complexity for small tables
-  const { renderedRowIndices, startOffset, totalHeight, isVirtualized } = useMemo(() => {
-    const rows = sortedRows || [];
-    const total = rows.length;
-    const totalHeight = total * ROW_HEIGHT;
-    
-    // Don't virtualize small tables or when container height is not yet known
-    const shouldVirtualize = total > 100 && containerHeight > 0;
-    
-    if (!shouldVirtualize) {
-      // Return all row indices for non-virtualized rendering
-      const allIndices: number[] = [];
-      for (let i = 0; i < total; i++) {
-        allIndices.push(i);
-      }
-      return { 
-        renderedRowIndices: allIndices, 
-        startOffset: 0, 
-        totalHeight,
-        isVirtualized: false
-      };
-    }
-    
-    // Calculate visible range
-    const startRow = Math.floor(scrollTop / ROW_HEIGHT);
-    const visibleCount = Math.ceil(containerHeight / ROW_HEIGHT);
-    
-    // Add overscan for smooth scrolling
-    const renderStart = Math.max(0, startRow - OVERSCAN_ROWS);
-    const renderEnd = Math.min(total, startRow + visibleCount + OVERSCAN_ROWS);
-    
-    // Generate array of indices to render
-    const renderedRowIndices: number[] = [];
-    for (let i = renderStart; i < renderEnd; i++) {
-      renderedRowIndices.push(i);
-    }
-    
-    const startOffset = renderStart * ROW_HEIGHT;
-    
-    return { renderedRowIndices, startOffset, totalHeight, isVirtualized: true };
-  }, [sortedRows, scrollTop, containerHeight]);
-  
-  // Track scroll position
-  const handleTableScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
-    const target = e.currentTarget;
-    setScrollTop(target.scrollTop);
+  // Check if a cell value is editable (primitive types only)
+  const isEditable = useCallback((value: JsonValue | undefined): boolean => {
+    if (value === undefined) return false;
+    if (value === null) return true;
+    const type = typeof value;
+    return type === 'string' || type === 'number' || type === 'boolean';
   }, []);
   
-  // Track container height
-  useEffect(() => {
-    const container = scrollContainerRef.current;
-    if (!container) return;
-    
-    const observer = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        setContainerHeight(entry.contentRect.height);
-      }
-    });
-    
-    observer.observe(container);
-    setContainerHeight(container.clientHeight);
-    
-    return () => observer.disconnect();
-  }, []);
-  
-  // Update cell value and propagate to document
-  const handleCellEdit = useCallback((sortedRowIndex: number, column: string, newValue: JsonValue) => {
+  // Update cell value
+  const handleCellEdit = useCallback((rowIndex: number, columnId: string, newValue: JsonValue) => {
     if (!parsedValue || !Array.isArray(parsedValue)) return;
     
-    const originalIndex = getOriginalIndex(sortedRowIndex);
-    
-    // Deep clone and update
     const newArray = parsedValue.map((item, idx) => {
-      if (idx === originalIndex && item !== null && typeof item === 'object' && !Array.isArray(item)) {
-        return { ...item, [column]: newValue };
+      if (idx === rowIndex && item !== null && typeof item === 'object' && !Array.isArray(item)) {
+        return { ...item, [columnId]: newValue };
       }
       return item;
     });
@@ -208,83 +104,58 @@ export function TableEditor() {
     const formatted = formatJson(JSON.stringify(newArray), { indent: 2 });
     updateContent(formatted);
     setEditingCell(null);
-  }, [parsedValue, updateContent, getOriginalIndex]);
+  }, [parsedValue, updateContent]);
   
   // Add new row
   const handleAddRow = useCallback((afterIndex?: number) => {
-    if (!parsedValue || !Array.isArray(parsedValue) || !tableData) return;
+    if (!parsedValue || !Array.isArray(parsedValue)) return;
     
     // Create new row with all columns set to null
     const newRow: JsonObject = {};
-    tableData.columns.forEach(col => {
+    dataColumns.forEach(col => {
       newRow[col] = null;
     });
     
     const newArray = [...parsedValue];
-    if (afterIndex !== undefined) {
-      const originalIndex = getOriginalIndex(afterIndex);
-      newArray.splice(originalIndex + 1, 0, newRow);
+    if (afterIndex !== undefined && afterIndex >= 0) {
+      newArray.splice(afterIndex + 1, 0, newRow);
     } else {
       newArray.push(newRow);
     }
     
     const formatted = formatJson(JSON.stringify(newArray), { indent: 2 });
     updateContent(formatted);
-  }, [parsedValue, tableData, updateContent, getOriginalIndex]);
+  }, [parsedValue, dataColumns, updateContent]);
   
   // Delete row
-  const handleDeleteRow = useCallback((sortedRowIndex: number) => {
+  const handleDeleteRow = useCallback((rowIndex: number) => {
     if (!parsedValue || !Array.isArray(parsedValue)) return;
     
-    const originalIndex = getOriginalIndex(sortedRowIndex);
-    const newArray = parsedValue.filter((_, idx) => idx !== originalIndex);
+    const newArray = parsedValue.filter((_, idx) => idx !== rowIndex);
     
     const formatted = formatJson(JSON.stringify(newArray), { indent: 2 });
     updateContent(formatted);
-    setSelectedRow(null);
-  }, [parsedValue, updateContent, getOriginalIndex]);
+    setSelectedRowIndex(null);
+  }, [parsedValue, updateContent]);
   
   // Duplicate row
-  const handleDuplicateRow = useCallback((sortedRowIndex: number) => {
+  const handleDuplicateRow = useCallback((rowIndex: number) => {
     if (!parsedValue || !Array.isArray(parsedValue)) return;
     
-    const originalIndex = getOriginalIndex(sortedRowIndex);
-    const rowToDuplicate = parsedValue[originalIndex];
+    const rowToDuplicate = parsedValue[rowIndex];
     if (!rowToDuplicate) return;
     
     const newArray = [...parsedValue];
-    newArray.splice(originalIndex + 1, 0, JSON.parse(JSON.stringify(rowToDuplicate)));
+    newArray.splice(rowIndex + 1, 0, JSON.parse(JSON.stringify(rowToDuplicate)));
     
     const formatted = formatJson(JSON.stringify(newArray), { indent: 2 });
     updateContent(formatted);
-  }, [parsedValue, updateContent, getOriginalIndex]);
+  }, [parsedValue, updateContent]);
   
-  // Handle sorting
-  const handleSort = useCallback((column: string) => {
-    setSortConfig(prev => {
-      if (prev?.column === column) {
-        if (prev.direction === 'asc') {
-          return { column, direction: 'desc' };
-        }
-        // Third click clears sort
-        return null;
-      }
-      return { column, direction: 'asc' };
-    });
-  }, []);
-  
-  // Check if a cell value is editable (primitive types only)
-  const isEditable = (value: JsonValue | undefined): boolean => {
-    if (value === undefined) return false;
-    if (value === null) return true;
-    const type = typeof value;
-    return type === 'string' || type === 'number' || type === 'boolean';
-  };
-  
-  // Handle row context menu
+  // Context menu for rows
   const handleRowContextMenu = useCallback((e: React.MouseEvent, rowIndex: number) => {
     e.preventDefault();
-    setSelectedRow(rowIndex);
+    setSelectedRowIndex(rowIndex);
     
     const menuItems: ContextMenuItem[] = [
       {
@@ -319,17 +190,15 @@ export function TableEditor() {
     openMenu(e, menuItems);
   }, [handleAddRow, handleDuplicateRow, handleDeleteRow, openMenu]);
   
-  // Handle column resize
-  const handleResizeStart = useCallback((e: React.MouseEvent, column: string) => {
+  // Column resize handlers
+  const handleResizeStart = useCallback((e: React.MouseEvent, columnId: string, currentWidth: number) => {
     e.preventDefault();
     e.stopPropagation();
-    
-    setResizingColumn(column);
+    setResizingColumn(columnId);
     setResizeStartX(e.clientX);
-    setResizeStartWidth(columnWidths[column] || 150);
-  }, [columnWidths]);
+    setResizeStartWidth(currentWidth);
+  }, []);
   
-  // Mouse move during resize
   useEffect(() => {
     if (!resizingColumn) return;
     
@@ -355,96 +224,197 @@ export function TableEditor() {
     };
   }, [resizingColumn, resizeStartX, resizeStartWidth]);
   
+  // Create column helper
+  const columnHelper = createColumnHelper<JsonObject>();
+  
+  // Build columns for TanStack Table
+  const columns = useMemo<ColumnDef<JsonObject, JsonValue>[]>(() => {
+    // Row number column
+    const rowNumColumn = columnHelper.display({
+      id: '__rowNum',
+      header: '#',
+      size: 50,
+      minSize: 50,
+      maxSize: 50,
+      cell: ({ row }) => (
+        <span className="text-text-muted font-mono text-xs">
+          {row.index + 1}
+        </span>
+      ),
+    });
+    
+    // Row actions column
+    const actionsColumn = columnHelper.display({
+      id: '__actions',
+      header: () => <DotsThreeVertical className="w-4 h-4 mx-auto text-text-tertiary" />,
+      size: 36,
+      minSize: 36,
+      maxSize: 36,
+      cell: ({ row }) => (
+        <button
+          onClick={(e) => handleRowContextMenu(e, row.index)}
+          className="p-0.5 text-text-muted hover:text-text-primary hover:bg-bg-hover rounded transition-colors"
+        >
+          <DotsThreeVertical className="w-4 h-4" />
+        </button>
+      ),
+    });
+    
+    // Data columns
+    const dataColumnDefs = dataColumns.map(colKey =>
+      columnHelper.accessor((row) => row[colKey], {
+        id: colKey,
+        header: ({ column }) => (
+          <div className="flex items-center gap-1 w-full">
+            <span className="truncate text-syntax-key">{colKey}</span>
+            {column.getIsSorted() === 'asc' && <CaretUp className="w-3 h-3 flex-shrink-0" />}
+            {column.getIsSorted() === 'desc' && <CaretDown className="w-3 h-3 flex-shrink-0" />}
+          </div>
+        ),
+        size: columnWidths[colKey] || 150,
+        minSize: 80,
+        cell: ({ getValue, row, column }) => {
+          const value = getValue();
+          const isEditingThis = editingCell?.rowIndex === row.index && editingCell?.columnId === column.id;
+          
+          if (isEditingThis) {
+            return (
+              <InlineEditor
+                value={value as JsonValue}
+                onSave={(newValue) => handleCellEdit(row.index, column.id, newValue)}
+                onCancel={() => setEditingCell(null)}
+                fitContainer
+              />
+            );
+          }
+          
+          return <CellValue value={value} />;
+        },
+        sortingFn: (rowA, rowB, columnId) => {
+          const a = rowA.getValue(columnId);
+          const b = rowB.getValue(columnId);
+          
+          if (a === null || a === undefined) return -1;
+          if (b === null || b === undefined) return 1;
+          
+          if (typeof a === 'number' && typeof b === 'number') {
+            return a - b;
+          }
+          
+          return String(a).localeCompare(String(b));
+        },
+      })
+    );
+    
+    return [rowNumColumn, actionsColumn, ...dataColumnDefs] as ColumnDef<JsonObject, JsonValue>[];
+  }, [dataColumns, columnWidths, editingCell, handleCellEdit, handleRowContextMenu, columnHelper]);
+  
+  // Initialize TanStack Table
+  // TanStack Table returns functions that can't be memoized - this is a known library limitation
+  // eslint-disable-next-line react-hooks/incompatible-library
+  const table = useReactTable({
+    data: dataRows,
+    columns,
+    state: {
+      sorting,
+    },
+    onSortingChange: setSorting,
+    getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+    getRowId: (_, index) => String(index),
+  });
+  
+  const { rows } = table.getRowModel();
+  
+  // Virtualizer for rows
+  const rowVirtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => tableContainerRef.current,
+    estimateSize: () => ROW_HEIGHT,
+    overscan: 10,
+  });
+  
+  const virtualRows = rowVirtualizer.getVirtualItems();
+  const totalSize = rowVirtualizer.getTotalSize();
+  
   // Keyboard navigation
   useEffect(() => {
     const container = containerRef.current;
-    if (!container || !tableData) return;
+    if (!container) return;
     
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (editingCell) return; // Don't interfere with editing
+      if (editingCell) return;
       
-      const cols = tableData.columns;
-      const rowCount = sortedRows?.length || 0;
+      const rowCount = rows.length;
+      if (rowCount === 0) return;
       
-      if (!selectedCell) {
-        // If no cell selected and we have data, select first cell on any arrow key
-        if (['ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
-          setSelectedCell({ row: 0, col: 0 });
-          e.preventDefault();
-        }
-        return;
-      }
+      const pageSize = Math.max(1, Math.floor((tableContainerRef.current?.clientHeight || 400) / ROW_HEIGHT) - 1);
       
-      const { row, col } = selectedCell;
+      let newIndex = selectedRowIndex ?? -1;
       
       switch (e.key) {
         case 'ArrowDown':
           e.preventDefault();
-          if (row < rowCount - 1) {
-            setSelectedCell({ row: row + 1, col });
-            setSelectedRow(row + 1);
-          }
+          newIndex = Math.min(rowCount - 1, (selectedRowIndex ?? -1) + 1);
           break;
         case 'ArrowUp':
           e.preventDefault();
-          if (row > 0) {
-            setSelectedCell({ row: row - 1, col });
-            setSelectedRow(row - 1);
+          newIndex = Math.max(0, (selectedRowIndex ?? rowCount) - 1);
+          break;
+        case 'PageDown':
+          e.preventDefault();
+          newIndex = Math.min(rowCount - 1, (selectedRowIndex ?? 0) + pageSize);
+          break;
+        case 'PageUp':
+          e.preventDefault();
+          newIndex = Math.max(0, (selectedRowIndex ?? 0) - pageSize);
+          break;
+        case 'Home':
+          if (e.ctrlKey || e.metaKey) {
+            e.preventDefault();
+            newIndex = 0;
           }
           break;
-        case 'ArrowRight':
-        case 'Tab':
-          e.preventDefault();
-          if (col < cols.length - 1) {
-            setSelectedCell({ row, col: col + 1 });
-          } else if (row < rowCount - 1) {
-            // Move to next row
-            setSelectedCell({ row: row + 1, col: 0 });
-            setSelectedRow(row + 1);
-          }
-          break;
-        case 'ArrowLeft':
-          e.preventDefault();
-          if (col > 0) {
-            setSelectedCell({ row, col: col - 1 });
-          } else if (row > 0) {
-            // Move to previous row
-            setSelectedCell({ row: row - 1, col: cols.length - 1 });
-            setSelectedRow(row - 1);
-          }
-          break;
-        case 'Enter':
-          e.preventDefault();
-          if (sortedRows) {
-            const rowData = sortedRows[row];
-            const colName = cols[col];
-            if (rowData && colName && isEditable(rowData[colName])) {
-              setEditingCell({ rowIndex: row, column: colName });
-            }
+        case 'End':
+          if (e.ctrlKey || e.metaKey) {
+            e.preventDefault();
+            newIndex = rowCount - 1;
           }
           break;
         case 'Delete':
         case 'Backspace':
-          e.preventDefault();
-          handleDeleteRow(row);
-          break;
-        case 'Home':
-          e.preventDefault();
-          setSelectedCell({ row: 0, col: 0 });
-          setSelectedRow(0);
-          break;
-        case 'End':
-          e.preventDefault();
-          setSelectedCell({ row: rowCount - 1, col: cols.length - 1 });
-          setSelectedRow(rowCount - 1);
-          break;
+          if (selectedRowIndex !== null) {
+            e.preventDefault();
+            handleDeleteRow(rows[selectedRowIndex]?.index ?? selectedRowIndex);
+          }
+          return;
+        case 'Enter':
+          if (selectedRowIndex !== null) {
+            e.preventDefault();
+            const row = rows[selectedRowIndex];
+            if (row && dataColumns.length > 0) {
+              const firstCol = dataColumns[0];
+              if (firstCol && isEditable(row.original[firstCol])) {
+                setEditingCell({ rowIndex: row.index, columnId: firstCol });
+              }
+            }
+          }
+          return;
+        default:
+          return;
+      }
+      
+      if (newIndex !== selectedRowIndex && newIndex >= 0 && newIndex < rowCount) {
+        setSelectedRowIndex(newIndex);
+        rowVirtualizer.scrollToIndex(newIndex, { align: 'auto', behavior: 'smooth' });
       }
     };
     
     container.addEventListener('keydown', handleKeyDown);
     return () => container.removeEventListener('keydown', handleKeyDown);
-  }, [selectedCell, editingCell, tableData, sortedRows, handleDeleteRow]);
+  }, [selectedRowIndex, rows, editingCell, handleDeleteRow, dataColumns, isEditable, rowVirtualizer]);
   
+  // Error state
   if (parseError) {
     return (
       <div className="h-full flex flex-col items-center justify-center p-8 text-center">
@@ -459,7 +429,8 @@ export function TableEditor() {
     );
   }
   
-  if (!tableData) {
+  // Not a table-compatible structure
+  if (dataColumns.length === 0 || dataRows.length === 0) {
     return (
       <div className="h-full flex flex-col items-center justify-center p-8 text-center">
         <div className="text-text-secondary text-lg font-medium mb-2">
@@ -472,20 +443,17 @@ export function TableEditor() {
     );
   }
   
-  const { columns } = tableData;
-  const rows = sortedRows || [];
-  
   return (
     <>
       <div 
         ref={containerRef}
         className="h-full flex flex-col bg-editor-bg focus:outline-none" 
-        tabIndex={-1}
+        tabIndex={0}
       >
         {/* Toolbar */}
-        <div className="flex items-center gap-4 px-3 py-1.5 border-b border-border-subtle text-xs">
-          <span className="text-text-tertiary">{rows.length} rows</span>
-          <span className="text-text-tertiary">{columns.length} columns</span>
+        <div className="flex items-center gap-4 px-3 py-1.5 border-b border-border-subtle text-xs flex-shrink-0">
+          <span className="text-text-tertiary">{dataRows.length} rows</span>
+          <span className="text-text-tertiary">{dataColumns.length} columns</span>
           <div className="flex-1" />
           <button
             onClick={() => handleAddRow()}
@@ -494,9 +462,9 @@ export function TableEditor() {
             <Plus className="w-3.5 h-3.5" />
             Add Row
           </button>
-          {sortConfig && (
+          {sorting.length > 0 && (
             <button
-              onClick={() => setSortConfig(null)}
+              onClick={() => setSorting([])}
               className="text-text-secondary hover:text-text-primary px-2 py-1 hover:bg-bg-hover rounded transition-colors"
             >
               Clear Sort
@@ -504,140 +472,121 @@ export function TableEditor() {
           )}
         </div>
         
-        {/* Table Container - with virtualization */}
+        {/* Table Container */}
         <div 
-          ref={scrollContainerRef}
+          ref={tableContainerRef}
           className="flex-1 overflow-auto"
-          onScroll={handleTableScroll}
         >
-          <table ref={tableRef} className="border-collapse text-sm" style={{ tableLayout: 'fixed' }}>
-            <colgroup>
-              <col style={{ width: 48 }} /> {/* Row number */}
-              <col style={{ width: 32 }} /> {/* Row actions */}
-              {columns.map(col => (
-                <col key={col} style={{ width: columnWidths[col] || 150 }} />
-              ))}
-            </colgroup>
-            <thead className="sticky top-0 z-10">
-              <tr className="bg-bg-surface">
-                {/* Row number column */}
-                <th className="px-3 py-2 text-left font-medium text-text-tertiary border-b border-r border-border-default sticky left-0 bg-bg-surface z-20">
-                  #
-                </th>
-                {/* Row actions column */}
-                <th className="px-1 py-2 text-center font-medium text-text-tertiary border-b border-r border-border-default sticky left-12 bg-bg-surface z-20">
-                  <DotsThreeVertical className="w-4 h-4 mx-auto" />
-                </th>
-                {columns.map(col => (
-                  <th
-                    key={col}
-                    className="relative px-3 py-2 text-left font-medium border-b border-r border-border-default group"
-                  >
-                    <button
-                      onClick={() => handleSort(col)}
-                      className="flex items-center gap-1 w-full text-left text-syntax-key hover:text-accent transition-colors"
-                    >
-                      <span className="truncate">{col}</span>
-                      {sortConfig?.column === col && (
-                        sortConfig.direction === 'asc' 
-                          ? <CaretUp className="w-3 h-3 flex-shrink-0" />
-                          : <CaretDown className="w-3 h-3 flex-shrink-0" />
-                      )}
-                    </button>
-                    
-                    {/* Resize handle */}
-                    <div
-                      className={cn(
-                        'absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-accent',
-                        resizingColumn === col && 'bg-accent'
-                      )}
-                      onMouseDown={(e) => handleResizeStart(e, col)}
-                    />
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {/* Spacer for virtualization - maintains scroll position */}
-              {isVirtualized && startOffset > 0 && (
-                <tr style={{ height: startOffset }}>
-                  <td colSpan={columns.length + 2} />
-                </tr>
-              )}
-              {renderedRowIndices.map((rowIndex) => {
-                const row = rows[rowIndex];
-                if (!row) return null;
-                return (
-                  <tr
-                    key={rowIndex}
-                    className={cn(
-                      'transition-colors',
-                      selectedRow === rowIndex 
-                        ? 'bg-accent/10' 
-                        : rowIndex % 2 === 1 
-                          ? 'bg-bg-surface/50 hover:bg-bg-hover' 
-                          : 'hover:bg-bg-hover'
-                    )}
-                    style={isVirtualized ? { height: ROW_HEIGHT } : undefined}
-                    onClick={() => setSelectedRow(rowIndex)}
-                  >
-                    {/* Row number */}
-                    <td className="px-3 py-1.5 text-text-muted border-r border-border-subtle font-mono sticky left-0 bg-inherit">
-                      {rowIndex + 1}
-                    </td>
-                    
-                    {/* Row actions */}
-                    <td className="px-1 py-1.5 text-center border-r border-border-subtle sticky left-12 bg-inherit">
-                      <button
-                        onClick={(e) => handleRowContextMenu(e, rowIndex)}
-                        className="p-0.5 text-text-muted hover:text-text-primary hover:bg-bg-hover rounded transition-colors"
-                      >
-                        <DotsThreeVertical className="w-4 h-4" />
-                      </button>
-                    </td>
-                    
-                    {columns.map((col, colIndex) => {
-                      const cellValue = row[col];
-                      const isEditingThisCell = editingCell?.rowIndex === rowIndex && editingCell?.column === col;
-                      const canEdit = isEditable(cellValue);
-                      const isSelectedCell = selectedCell?.row === rowIndex && selectedCell?.col === colIndex;
+          <table className="w-full border-collapse text-sm" style={{ tableLayout: 'fixed' }}>
+            <thead className="sticky top-0 z-10 bg-bg-surface">
+              {table.getHeaderGroups().map(headerGroup => (
+                <tr key={headerGroup.id}>
+                  {headerGroup.headers.map(header => {
+                    const isDataColumn = !header.id.startsWith('__');
+                    const width = header.id === '__rowNum' ? 50 
+                      : header.id === '__actions' ? 36 
+                      : columnWidths[header.id] || header.getSize();
                     
                     return (
-                      <td
-                        key={col}
+                      <th
+                        key={header.id}
                         className={cn(
-                          'px-3 py-1.5 border-r border-border-subtle font-mono overflow-hidden',
-                          canEdit && 'cursor-pointer',
-                          isSelectedCell && 'ring-2 ring-inset ring-accent/50 bg-accent/5'
+                          'px-3 py-2 text-left font-medium border-b border-r border-border-default relative',
+                          header.id === '__rowNum' && 'sticky left-0 z-20 bg-bg-surface',
+                          header.id === '__actions' && 'sticky left-[50px] z-20 bg-bg-surface text-center',
+                          isDataColumn && 'cursor-pointer hover:bg-bg-hover'
                         )}
-                        onClick={() => setSelectedCell({ row: rowIndex, col: colIndex })}
-                        onDoubleClick={() => {
-                          if (canEdit) {
-                            setEditingCell({ rowIndex, column: col });
-                          }
-                        }}
-                        onContextMenu={(e) => handleRowContextMenu(e, rowIndex)}
+                        style={{ width, minWidth: width, maxWidth: header.id.startsWith('__') ? width : undefined }}
+                        onClick={isDataColumn ? header.column.getToggleSortingHandler() : undefined}
                       >
-                        {isEditingThisCell ? (
-                          <InlineEditor
-                            value={cellValue as JsonValue}
-                            onSave={(newValue) => handleCellEdit(rowIndex, col, newValue)}
-                            onCancel={() => setEditingCell(null)}
-                            fitContainer
+                        {flexRender(header.column.columnDef.header, header.getContext())}
+                        
+                        {/* Resize handle for data columns */}
+                        {isDataColumn && (
+                          <div
+                            className={cn(
+                              'absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-accent',
+                              resizingColumn === header.id && 'bg-accent'
+                            )}
+                            onMouseDown={(e) => handleResizeStart(e, header.id, width)}
+                            onClick={(e) => e.stopPropagation()}
                           />
-                        ) : (
-                          <CellValue value={cellValue} />
                         )}
-                      </td>
+                      </th>
                     );
                   })}
                 </tr>
-              );
-            })}
-              {/* Bottom spacer for virtualization */}
-              {totalHeight - startOffset - (renderedRowIndices.length * ROW_HEIGHT) > 0 && (
-                <tr style={{ height: totalHeight - startOffset - (renderedRowIndices.length * ROW_HEIGHT) }}>
-                  <td colSpan={columns.length + 2} />
+              ))}
+            </thead>
+            <tbody>
+              {/* Top padding for virtualization */}
+              {virtualRows.length > 0 && (virtualRows[0]?.start ?? 0) > 0 && (
+                <tr>
+                  <td style={{ height: virtualRows[0]?.start ?? 0 }} colSpan={columns.length} />
+                </tr>
+              )}
+              
+              {virtualRows.map(virtualRow => {
+                const row = rows[virtualRow.index] as Row<JsonObject>;
+                if (!row) return null;
+                
+                const originalIndex = row.index;
+                const isSelected = selectedRowIndex === virtualRow.index;
+                
+                return (
+                  <tr
+                    key={row.id}
+                    data-index={virtualRow.index}
+                    className={cn(
+                      'transition-colors',
+                      isSelected 
+                        ? 'bg-accent/10' 
+                        : virtualRow.index % 2 === 1 
+                          ? 'bg-bg-surface/50 hover:bg-bg-hover' 
+                          : 'hover:bg-bg-hover'
+                    )}
+                    style={{ height: ROW_HEIGHT }}
+                    onClick={() => setSelectedRowIndex(virtualRow.index)}
+                    onContextMenu={(e) => handleRowContextMenu(e, originalIndex)}
+                  >
+                    {row.getVisibleCells().map(cell => {
+                      const isDataColumn = !cell.column.id.startsWith('__');
+                      
+                      return (
+                        <td
+                          key={cell.id}
+                          className={cn(
+                            'px-3 py-1 border-r border-border-subtle font-mono overflow-hidden text-ellipsis whitespace-nowrap',
+                            cell.column.id === '__rowNum' && 'sticky left-0 bg-inherit',
+                            cell.column.id === '__actions' && 'sticky left-[50px] bg-inherit text-center',
+                            isDataColumn && isEditable(cell.getValue() as JsonValue) && 'cursor-pointer'
+                          )}
+                          style={{ 
+                            width: cell.column.getSize(),
+                            minWidth: cell.column.getSize(),
+                            maxWidth: cell.column.id.startsWith('__') ? cell.column.getSize() : undefined,
+                          }}
+                          onDoubleClick={() => {
+                            if (isDataColumn && isEditable(cell.getValue() as JsonValue)) {
+                              setEditingCell({ rowIndex: originalIndex, columnId: cell.column.id });
+                            }
+                          }}
+                        >
+                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                );
+              })}
+              
+              {/* Bottom padding for virtualization */}
+              {virtualRows.length > 0 && (
+                <tr>
+                  <td 
+                    style={{ height: totalSize - (virtualRows[virtualRows.length - 1]?.end ?? 0) }} 
+                    colSpan={columns.length} 
+                  />
                 </tr>
               )}
             </tbody>
@@ -645,8 +594,9 @@ export function TableEditor() {
         </div>
         
         {/* Keyboard shortcuts hint */}
-        <div className="px-3 py-1 border-t border-border-subtle text-xs text-text-muted flex items-center gap-4">
+        <div className="px-3 py-1 border-t border-border-subtle text-xs text-text-muted flex items-center gap-4 overflow-x-auto no-scrollbar flex-shrink-0">
           <span><kbd className="px-1 py-0.5 bg-bg-surface rounded text-[10px]">Arrow</kbd> Navigate</span>
+          <span><kbd className="px-1 py-0.5 bg-bg-surface rounded text-[10px]">PgUp/Dn</kbd> Page</span>
           <span><kbd className="px-1 py-0.5 bg-bg-surface rounded text-[10px]">Enter</kbd> Edit</span>
           <span><kbd className="px-1 py-0.5 bg-bg-surface rounded text-[10px]">Del</kbd> Delete Row</span>
           <span><kbd className="px-1 py-0.5 bg-bg-surface rounded text-[10px]">Click header</kbd> Sort</span>

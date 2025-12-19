@@ -11,12 +11,20 @@ interface GoToLineModalProps {
 
 export function GoToLineModal({ isOpen, onClose, onGoToLine, maxLine }: GoToLineModalProps) {
   const [lineNumber, setLineNumber] = useState('');
+  const [prevIsOpen, setPrevIsOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  
+  // Reset lineNumber when modal opens (state-during-render pattern)
+  if (isOpen && !prevIsOpen) {
+    setLineNumber('');
+    setPrevIsOpen(true);
+  } else if (!isOpen && prevIsOpen) {
+    setPrevIsOpen(false);
+  }
   
   // Focus input when modal opens
   useEffect(() => {
     if (isOpen) {
-      setLineNumber('');
       // Small delay to ensure modal is rendered
       setTimeout(() => inputRef.current?.focus(), 50);
     }

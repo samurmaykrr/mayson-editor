@@ -52,7 +52,7 @@ export function CompareModal({
   const lineDiffs = useMemo(() => {
     if (!rightContent) return [];
     return diffLines(formattedLeft, formattedRight);
-  }, [formattedLeft, formattedRight]);
+  }, [formattedLeft, formattedRight, rightContent]);
   
   // Get diff summary
   const summary = useMemo(() => {

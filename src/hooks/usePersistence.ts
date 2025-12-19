@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
 import {
   saveDocuments,
   saveSession,
@@ -74,10 +74,12 @@ export function usePersistence({
     restore();
   }, [onRestore]);
   
-  // Save documents when they change
+  // Save documents when they change.
+  // This effect syncs React state to IndexedDB - a legitimate external system sync.
   useEffect(() => {
     if (!isInitializedRef.current) return;
     
+    // eslint-disable-next-line react-you-might-not-need-an-effect/you-might-not-need-an-effect -- IndexedDB sync requires effect
     const currentDocIds = new Set(documents.keys());
     
     // Find deleted documents
@@ -114,14 +116,14 @@ export function usePersistence({
  * Hook to get persistence status
  */
 export function usePersistenceStatus() {
-  const lastSavedRef = useRef<number | null>(null);
+  const [lastSaved, setLastSaved] = useState<number | null>(null);
   
   const markSaved = useCallback(() => {
-    lastSavedRef.current = Date.now();
+    setLastSaved(Date.now());
   }, []);
   
   return {
-    lastSaved: lastSavedRef.current,
+    lastSaved,
     markSaved,
   };
 }

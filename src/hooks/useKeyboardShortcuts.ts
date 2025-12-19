@@ -39,7 +39,11 @@ function shortcutToKeyId(shortcut: KeyboardShortcut): string {
  */
 export function useKeyboardShortcuts(shortcuts: KeyboardShortcut[]) {
   const shortcutsRef = useRef(shortcuts);
-  shortcutsRef.current = shortcuts;
+  
+  // Update ref in an effect instead of during render
+  useEffect(() => {
+    shortcutsRef.current = shortcuts;
+  });
   
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
